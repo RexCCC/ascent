@@ -31,6 +31,6 @@ q = Query(
 heatmaps(data=q.threshold_data())
 plt.title('Activation threshold heatmap')
 
-save_directory = os.path.join('output', 'analysis')
+save_directory = os.path.join('out', 'analysis')
 os.makedirs(save_directory, exist_ok=True)
 plt.savefig(os.path.join(save_directory, 'threshold_heatmap.png'), dpi=400, bbox_inches='tight')
