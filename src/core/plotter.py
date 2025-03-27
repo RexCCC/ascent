@@ -24,31 +24,39 @@ def heatmaps(
     *facetdata,
     data=None,
     ax=None,
+    return_metadata=False,  # add an explicit parameter for metadata output
     **kwargs,
 ):
     """Create heatmap for a single axis using the _HeatmapPlotter class.
 
-    To create a single heatmap, call the class directly
+    To create a single heatmap, call the class directly.
     Use a Seaborn ``FacetGrid`` to create multiple heatmaps in one figure, using the ``FacetGrid.map()`` method.
     Note that data cannot be aggregated across n_sims
-    (e.g., each call of ``heatmaps()`` must recieve only one threshold per fiber).
+    (e.g., each call of ``heatmaps()`` must receive only one threshold per fiber).
 
-    :param facetdata: Recieves data from ``FacetGrid`` if using to plot an array.
+    :param facetdata: Receives data from ``FacetGrid`` if using to plot an array.
     :param data: DataFrame to plot, used if manually passing data.
     :param ax: Axis to plot on.
-    :param kwargs: Arguments to be passed to ``_HeatmapPlotter`` class constructor.
-    :return: Plotting axis.
+    :param return_metadata: Whether to return metadata along with the axis.
+    :param kwargs: Arguments to be passed to the ``_HeatmapPlotter`` class constructor.
+    :return: Plotting axis, or a tuple (axis, metadata) if ``return_metadata`` is True.
     """
     if data is None:
         data = pd.concat(facetdata, axis=1)
-    # initialize heatmap plotter and pass in all arguments
-    plotter = _HeatmapPlotter(data, **kwargs)
+        
+    # Pass the metadata flag explicitly to _HeatmapPlotter
+    plotter = _HeatmapPlotter(data, return_metadata=return_metadata, **kwargs)
+    
     if ax is None:
         ax = plt.gca()
-
-    plotter.plot(ax)
-
-    return ax
+    
+    result = plotter.plot(ax)
+    
+    # If metadata was requested, the result is a tuple (ax, meta_data)
+    if return_metadata:
+        return result  # expected to be (ax, meta_data)
+    else:
+        return result  # just the axis
 
 
 class _HeatmapPlotter:
@@ -80,6 +88,7 @@ class _HeatmapPlotter:
         min_thresh=None,
         max_thresh=None,
         color=None,
+        return_metadata=False,
     ):
         """Initialize heatmap plotter.
 
@@ -137,6 +146,7 @@ class _HeatmapPlotter:
         self.max_thresh = max(data.threshold) if max_thresh is None else max_thresh
         self.min_thresh = min(data.threshold) if min_thresh is None else min_thresh
         self.cuff_orientation = cuff_orientation
+        self.return_metadata = return_metadata
 
         # run setup in preparation for plotting
         self.validate(data)
@@ -155,12 +165,21 @@ class _HeatmapPlotter:
         if self.colorbar and self.mode != 'on_off':
             self.add_colorbar(ax)
 
-        if self.cuff_orientation:
+        if self.cuff_orientation and self.return_metadata is True:
+            meta_data = self.plot_cuff_orientation(ax)
+        elif self.cuff_orientation:
             self.plot_cuff_orientation(ax)
+        else:
+            pass  # Add a valid statement or logic here if needed
+            
 
         self.plot_inners_fibers(ax)
 
-        return ax
+        if self.return_metadata is True:
+            return ax, meta_data
+        else:
+            return ax
+        
 
     def plot_inners_fibers(self, ax):
         """Plot inners and fibers using the colors determined in determine_colors().
@@ -302,6 +321,7 @@ class _HeatmapPlotter:
         # get radius of sample
         try:
             r = self.sample.slides[0].nerve.mean_radius()
+            print(f'Radius: {r}')
         except AttributeError:
             r = self.sample.slides[0].fascicles[0].outer.mean_radius()
         # get orientation angle from slide
@@ -310,8 +330,21 @@ class _HeatmapPlotter:
         with open(Query.build_path(Config.MODEL, [self.sample_index, self.model_index])) as f:
             model_config = json.load(f)
         # add any cuff rotation
-        theta += np.deg2rad(model_config.get('cuff').get('rotate').get('add_ang'))
+        theta += np.deg2rad(model_config.get('cuff')[0].get('rotate').get('add_ang'))
+        print(f'Orientation: {np.rad2deg(theta)} degrees, {theta} radians')
         ax.scatter(r * 1.2 * np.cos(theta), r * 1.2 * np.sin(theta), 300, 'red', 'o')
+        x = r * np.cos(theta)
+        y = r * np.sin(theta)
+        print(f'x: {x}, y: {y}')
+        if self.return_metadata:
+            meta_data = {}
+            meta_data["orientation_point_x"] = x
+            meta_data["orientation_point_y"] = y
+            meta_data["r_cuff"] = r
+            meta_data["cuff_shift_x"]= model_config.get('cuff')[0].get('shift').get('x')            # Cuff center x-coordinate
+            meta_data["cuff_shift_y"]= model_config.get('cuff')[0].get('shift').get('y')   # Cuff center y-coordinate
+            return meta_data
+        
 
 
 def ap_loctime(  # noqa: C901
