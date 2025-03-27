@@ -7,6 +7,7 @@ import glob
 import json
 import os
 import warnings
+import math
 
 import matplotlib.colorbar as cbar
 import matplotlib.colors as mplcolors
@@ -14,6 +15,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as tick
 import numpy as np
 import pandas as pd
+import matplotlib.patches as mpatches
 
 from src.core import Query
 from src.utils import Config, Object
@@ -517,3 +519,434 @@ def ap_loctime(  # noqa: C901
                                 (f'out/analysis/ap_time_loc_distribution_{sample_index}_{model_index}_{sim_index}.png'),
                                 dpi=300,
                             )
+
+
+def activation_profile(
+    *facetdata,
+    data=None,
+    ax=None,
+    currents=None,
+    cutoff_current=None,
+    _return_plotter=False,  # Special flag to return the plotter object
+    **kwargs,
+):
+    """Create activation profile visualization that shows which fibers are activated.
+
+    This function visualizes which fibers are activated (red) vs not activated (grey) 
+    based on whether their threshold is below or above a specified cutoff current.
+
+    :param facetdata: Receives data from FacetGrid if using to plot an array.
+    :param data: DataFrame to plot, used if manually passing data.
+    :param ax: Axis to plot on.
+    :param currents: Dictionary with 'contact1_uA' and 'contact2_uA' values.
+    :param cutoff_current: Current threshold to determine activation (in μA).
+    :param _return_plotter: Internal flag to return the plotter object for testing.
+    :param kwargs: Arguments to be passed to the _ActivationProfilePlotter constructor.
+    :return: Plotting axis, or the plotter object if _return_plotter is True.
+    """
+    if data is None:
+        data = pd.concat(facetdata, axis=1)
+    
+    plotter = _ActivationProfilePlotter(data, currents=currents, cutoff_current=cutoff_current, **kwargs)
+    
+    if ax is None:
+        ax = plt.gca()
+    
+    result_ax = plotter.plot(ax)
+    
+    # Return the plotter itself for testing or advanced usage if requested
+    if _return_plotter:
+        return plotter
+    else:
+        return result_ax
+
+
+class _ActivationProfilePlotter:
+    """Class used to construct activation profile plots that show which fibers are activated.
+
+    This class should not be called directly by the user. Instead,
+    use the activation_profile() function, which will pass any keyword
+    arguments to this class's constructor.
+    """
+
+    def __init__(
+        self,
+        data,
+        currents=None,
+        cutoff_current=None,
+        sample_object=None,
+        sim_object=None,
+        activated_color='red',
+        non_activated_color='grey',
+        title_format='Nerve Fiber Activation: Contact 1 = {contact1_uA}μA, Contact 2 = {contact2_uA}μA',
+        contact_colors=None,
+        show_contacts=True,
+        colorbar=False,
+        cuff_orientation=True,
+        plot_outers=True,
+        scatter_kws=None,
+        line_kws=None,
+        cuff_array=None,
+        color=None,
+    ):
+        """Initialize activation profile plotter.
+
+        :param data: DataFrame containing threshold data.
+        :param currents: Dictionary with 'contact1_uA' and 'contact2_uA' values.
+        :param cutoff_current: Current threshold to determine activation (in μA).
+        :param sample_object: Sample object to use for plotting. Automatically loaded if not provided.
+        :param sim_object: Simulation object to use for plotting. Automatically loaded if not provided.
+        :param activated_color: Color for activated fibers.
+        :param non_activated_color: Color for non-activated fibers.
+        :param title_format: Format string for the plot title.
+        :param contact_colors: List of colors for cuff contacts.
+        :param show_contacts: Whether to show the cuff contacts.
+        :param colorbar: Whether to add a colorbar (not typically used).
+        :param cuff_orientation: Whether to plot a point for the cuff orientation.
+        :param plot_outers: Whether to plot the fascicle outers.
+        :param scatter_kws: Keyword arguments to pass to matplotlib.pyplot.scatter.
+        :param line_kws: Keyword arguments to pass to matplotlib.pyplot.plot.
+        :param cuff_array: Array specifying the current distribution across contacts.
+        :param color: Color passed in by seaborn when using FacetGrid. Not used.
+        """
+        # Set default values for currents and cutoff if not provided
+        self.currents = currents or {'contact1_uA': 400, 'contact2_uA': 0}
+        self.cutoff_current = cutoff_current or self.currents.get('contact1_uA', 0) + self.currents.get('contact2_uA', 0)
+        
+        # Store configuration parameters
+        self.sample_index = self.sim_index = self.model_index = self.n_sim_index = None
+        self.plot_outers = plot_outers
+        self.activated_color = activated_color
+        self.non_activated_color = non_activated_color
+        self.title_format = title_format
+        self.contact_colors = contact_colors or ["red", "blue", "green", "orange", "purple", "teal"]
+        self.show_contacts = show_contacts
+        self.colorbar = colorbar
+        self.cuff_orientation = cuff_orientation
+        self.sample = sample_object
+        self.sim = sim_object
+        self.color = color
+        
+        # Set default scatter and line kwargs if not provided
+        self.scatter_kws = scatter_kws if scatter_kws is not None else {}
+        self.scatter_kws.setdefault('s', 100)
+        self.line_kws = line_kws if line_kws is not None else {}
+        
+        # Cuff current array (what proportion of current goes to each contact)
+        if self.currents.get('contact1_uA', 0) > 0 or self.currents.get('contact2_uA', 0) > 0:
+            total = self.currents.get('contact1_uA', 0) + self.currents.get('contact2_uA', 0)
+            if total > 0:
+                # Default array: only first two contacts used with calculated proportions
+                self.cuff_array = cuff_array or [
+                    self.currents.get('contact1_uA', 0) / total if total > 0 else 0,
+                    self.currents.get('contact2_uA', 0) / total if total > 0 else 0,
+                    0, 0, 0, 0
+                ]
+            else:
+                self.cuff_array = [0, 0, 0, 0, 0, 0]
+        else:
+            self.cuff_array = cuff_array or [0, 0, 0, 0, 0, 0]
+            
+        # Set default cuff parameters (will be calculated later if needed)
+        self.cuff_deg = None
+        self.cuff_r = None
+        self.cuff_center_x = None
+        self.cuff_center_y = None
+        
+        # Create lists to store fiber colors
+        self.fiber_colors = []
+        
+        # Run setup
+        self.validate(data)
+        self.get_objects()
+        self.determine_colors(data)
+
+    def plot(self, ax):
+        """Make activation profile plot.
+
+        :param ax: Axis to plot on.
+        :return: Plotting axis.
+        """
+        self.set_ax(ax)
+        
+        # Draw fascicles and fibers
+        self.plot_inners_fibers(ax)
+        
+        # Draw cuff contacts if requested
+        if self.show_contacts:
+            self.plot_cuff_contacts(ax)
+            
+        # Add color legend
+        self.add_legend(ax)
+        
+        # Add title with current values
+        title = self.title_format.format(**self.currents)
+        ax.set_title(title)
+        
+        # Add annotation showing total current
+        ax.text(0.02, 0.02, f"Total Current: {self.cutoff_current}μA", transform=ax.transAxes)
+        
+        return ax
+
+    def plot_inners_fibers(self, ax):
+        """Plot inners and fibers using the colors determined in determine_colors().
+
+        :param ax: axis to plot on
+        """
+        # Plot fascicle structure
+        self.sample.slides[0].plot(
+            final=False,
+            fix_aspect_ratio=True,
+            fascicle_colors=None, # No inner coloring for activation profile
+            ax=ax,
+            outers_flag=self.plot_outers,
+            inner_format='k-',
+            scalebar=True,
+            line_kws=self.line_kws,
+        )
+        
+        # Plot fibers with activation colors
+        self.scatter_kws['c'] = self.fiber_colors
+        self.sim.fibersets[0].plot(ax=ax, scatter_kws=self.scatter_kws)
+
+    def plot_cuff_contacts(self, ax):
+        """Plot the cuff contacts based on current distribution.
+
+        :param ax: axis to plot on
+        """
+        # Get cuff parameters if not already calculated
+        if self.cuff_deg is None:
+            self.calculate_cuff_parameters()
+        
+        # Calculate angles for contacts
+        theta = self.sample.slides[0].orientation_angle if self.sample.slides[0].orientation_angle is not None else 0
+        
+        # Draw the cuff circle
+        cuff = mpatches.Arc(
+            xy=(self.cuff_center_x, self.cuff_center_y),
+            width=2 * self.cuff_r,
+            height=2 * self.cuff_r,
+            angle=0.0,
+            theta1=0,
+            theta2=360,
+            color="gray",
+            linewidth=1,
+        )
+        ax.add_artist(cuff)
+        
+        # Calculate orientation point coordinates
+        try:
+            # First try to get the nerve center
+            nerve_x, nerve_y = 0, 0  # Default to origin
+            if hasattr(self.sample.slides[0], 'nerve'):
+                nerve_x, nerve_y = self.sample.slides[0].nerve.center
+            
+            # Use orientation angle for rotation
+            rot_def = np.arctan2(nerve_y, nerve_x) + theta
+        except Exception as e:
+            # Fallback to a default orientation
+            print(f"Warning: Could not determine nerve center: {e}")
+            rot_def = theta
+        
+        const = 0.0
+        ln_angs = [
+            rot_def - 2.5 * self.cuff_deg - const,
+            rot_def - 1.5 * self.cuff_deg - const,
+            rot_def - 0.5 * self.cuff_deg - const,
+            rot_def + 0.5 * self.cuff_deg - const,
+            rot_def + 1.5 * self.cuff_deg - const,
+            rot_def + 2.5 * self.cuff_deg - const,
+        ]
+        
+        # Plot each contact with current
+        for i, current in enumerate(self.cuff_array):
+            if current > 0:
+                active_contact = mpatches.Arc(
+                    xy=(self.cuff_center_x, self.cuff_center_y),
+                    width=2 * self.cuff_r + 220,
+                    height=2 * self.cuff_r + 220,
+                    angle=0.0,
+                    theta1=math.degrees(ln_angs[i]) - self.cuff_span / 2,
+                    theta2=math.degrees(ln_angs[i]) + self.cuff_span / 2,
+                    color=self.contact_colors[i % len(self.contact_colors)],
+                    linewidth=4,
+                    alpha=current  # Set alpha based on current proportion
+                )
+                ax.add_artist(active_contact)
+                
+    def calculate_cuff_parameters(self):
+        """Calculate ImThera cuff parameters based on sample radius."""
+        try:
+            # Try to get radius from nerve
+            if hasattr(self.sample.slides[0], 'nerve'):
+                r = self.sample.slides[0].nerve.mean_radius()
+            # If no nerve, try fascicles
+            elif hasattr(self.sample.slides[0], 'fascicles') and len(self.sample.slides[0].fascicles) > 0:
+                r = self.sample.slides[0].fascicles[0].outer.mean_radius()
+            else:
+                # Fallback to default
+                print("Warning: Could not determine cuff radius, using default.")
+                r = 1800  # Default radius in μm
+        except Exception as e:
+            print(f"Warning: Error calculating cuff radius: {e}")
+            r = 1800  # Default radius in μm
+        
+        # Convert to inches
+        r_in_iti = r / 25400
+        
+        # Constants from ImThera cuff design
+        r_cuff_in_pre_iti = 0.059  # inch (pre-expansion inner radius)
+        ang_cuffseam_contactcenter_pre_itc = 53  # degrees
+        ang_contactcenter_contactcenter_pre_itc = 51  # degrees
+        contact_diameter_inch = 2 / 25.4  # Convert 2mm to inches
+
+        # Calculate angular spacing between contacts
+        ang_spacing_deg = ang_contactcenter_contactcenter_pre_itc * (r_cuff_in_pre_iti / r_in_iti)
+        self.cuff_deg = math.radians(ang_spacing_deg)
+        
+        # Calculate contact span
+        self.cuff_span = math.degrees(contact_diameter_inch / r_in_iti)
+        
+        # Set cuff radius and center
+        self.cuff_r = r
+        self.cuff_center_x = 0
+        self.cuff_center_y = 0
+                
+    def add_legend(self, ax):
+        """Add legend to activation profile plot.
+
+        :param ax: axis to plot on
+        """
+        # Create legend patches for activated and non-activated
+        activated_patch = mpatches.Patch(color=self.activated_color, label='Activated')
+        non_activated_patch = mpatches.Patch(color=self.non_activated_color, label='Not Activated')
+        
+        # Add legend to plot
+        ax.legend(handles=[activated_patch, non_activated_patch], loc='lower right')
+
+    @staticmethod
+    def set_ax(ax):
+        """Remove axis elements for cleaner visualization.
+
+        :param ax: axis to plot on
+        """
+        ax.spines['left'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xlabel('')
+        ax.set_ylabel('')
+        ax.set_aspect('equal')
+
+    def determine_colors(self, threshdf):
+        """Determine fiber colors based on activation status.
+
+        :param threshdf: DataFrame of thresholds.
+        """
+        # Create a color list for each fiber
+        self.fiber_colors = []
+        
+        # Track counts for activated and non-activated fibers
+        activated_count = 0
+        total_count = 0
+        
+        # Store activation info for detailed reporting
+        self.activation_info = []
+        
+        # Convert cutoff current from μA to mA for proper comparison with thresholds
+        cutoff_current_mA = self.cutoff_current / 1000.0  # Convert μA to mA
+        
+        print(f"Fiber Activation Analysis - Cutoff Current: {self.cutoff_current} μA ({cutoff_current_mA} mA)")
+        print("-" * 80)
+        
+        # Try to get fiber positions from the sample object
+        fiber_positions = {}
+        try:
+            # Get fiber coordinates from the sample's fiber set if available
+            if hasattr(self.sample, 'fiber_set') and self.sample.fiber_set and self.sample.fiber_set.fibers:
+                for idx, fiber in enumerate(self.sample.fiber_set.fibers):
+                    if isinstance(fiber, dict) and 'fiber' in fiber:
+                        # Take the first point's x,y coordinates
+                        x, y, _ = fiber['fiber'][0]
+                        fiber_positions[idx] = (x, y)
+                    elif isinstance(fiber, list) and len(fiber) > 0:
+                        # Take the first point's x,y coordinates
+                        x, y, _ = fiber[0]
+                        fiber_positions[idx] = (x, y)
+        except Exception as e:
+            print(f"Warning: Could not get fiber positions from sample: {e}")
+        
+        # For each fiber, check if it's activated based on threshold vs cutoff_current
+        for fiber_index in pd.unique(threshdf['index']):
+            fiber_data = threshdf.query(f'index=={fiber_index}')
+            fiber_thresh = np.mean(fiber_data.threshold)
+            
+            # Get fiber coordinates if available from either DataFrame or fiber positions dictionary
+            fiber_x = None
+            fiber_y = None
+            if 'pos_x' in fiber_data.columns and 'pos_y' in fiber_data.columns:
+                fiber_x = fiber_data['pos_x'].iloc[0]
+                fiber_y = fiber_data['pos_y'].iloc[0]
+            elif fiber_index in fiber_positions:
+                fiber_x, fiber_y = fiber_positions[fiber_index]
+            
+            # Store inner information
+            inner = fiber_data['inner'].iloc[0] if 'inner' in fiber_data.columns else None
+            
+            # Determine activation status
+            total_count += 1
+            is_activated = False
+            
+            # If threshold is NaN, use non-activated color
+            if np.isnan(fiber_thresh):
+                warnings.warn(
+                    'Missing fiber threshold, color will appear as missing color (defaults to grey).', 
+                    stacklevel=2
+                )
+                self.fiber_colors.append(self.non_activated_color)
+            else:
+                # Proper comparison with converted units (mA)
+                is_activated = fiber_thresh <= cutoff_current_mA
+                self.fiber_colors.append(
+                    self.activated_color if is_activated else self.non_activated_color
+                )
+                if is_activated:
+                    activated_count += 1
+            
+            # Store activation info
+            self.activation_info.append({
+                'fiber_index': fiber_index,
+                'inner': inner,
+                'pos_x': fiber_x, 
+                'pos_y': fiber_y,
+                'threshold_mA': fiber_thresh,
+                'is_activated': is_activated
+            })
+        
+        # Print summary statistics
+        self.activation_df = pd.DataFrame(self.activation_info)
+        print(f"Activation Summary: {activated_count}/{total_count} fibers activated ({100.0*activated_count/total_count:.1f}%)")
+        
+        # Return activation counts for external use
+        return activated_count, total_count
+
+    def get_objects(self):
+        """Get sample and sim objects for plotting."""
+        if self.sample is None:
+            self.sample = Query.get_object(Object.SAMPLE, [self.sample_index])
+        if self.sim is None:
+            self.sim = Query.get_object(Object.SIMULATION, [self.sample_index, self.model_index, self.sim_index])
+
+    def validate(self, data):
+        """Check that data is valid for plotting.
+
+        :param data: DataFrame of thresholds.
+        """
+        # Make sure only one sample, model, sim, and nsim for this plot
+        for index in ['sample', 'model', 'sim', 'nsim']:
+            assert (
+                len(pd.unique(data[index])) == 1
+            ), f'Only one {index} allowed for this plot. Append something like q.threshold_data.query(\'{index}==0\')'
+            setattr(self, index + '_index', pd.unique(data[index])[0])

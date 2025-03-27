@@ -1,0 +1,134 @@
+Project Goal
+The objective of this project is to analyze nerve fiber activation profiles using the Ascent pipeline under specific current conditions. Specifically, we aim to:
+* Fix the current on contact 1 at 400 ?A.
+* Vary the current on contact 2 in increments (0%, 20%, 40%, 60%, 80%, 100% of 400 ?A).
+* Determine which nerve fibers are activated for each condition based on a total current (I_"total" ) that scales with the combined currents on contacts 1 and 2.
+* Visualize the activation profiles, marking fibers as activated (red) if their threshold is at or below I_"total"  and not activated (grey) if above.
+
+Definitions
+1. Contact 1: The primary stimulation point, fixed at a constant current of 400 ?A.
+2. Contact 2: The secondary stimulation point, with current varied as a percentage (p%) of 400 ?A (i.e., 0 ?A, 80 ?A, 160 ?A, 240 ?A, 320 ?A, 400 ?A).
+3. Simulation Array (sim_array): A six-element array representing the proportion of total current (I_"total" ) applied to each contact. Since only contacts 1 and 2 are used, it takes the form [a,b,0,0,0,0], where a+b=1.
+4. Total Current (I_"total" ): The sum of currents applied to contacts 1 and 2, calculated to ensure contact 1 receives 400 ?A while contact 2 varies.
+5. Activation Threshold (T): The minimum I_"total"  required to activate a specific nerve fiber under a given sim_array.
+6. Activation Profile: A visual representation of nerve fiber activation, where fibers are colored red if their threshold T?I_"total"  (activated) and grey if T>I_"total"  (not activated).
+
+Project Plan and Steps
+Step 1: Define Conditions
+Define six experimental conditions based on the percentage (p%) of current applied to contact 2 relative to 400 ?A:
+* p=0% (0 ?A)
+* p=20% (80 ?A)
+* p=40% (160 ?A)
+* p=60% (240 ?A)
+* p=80% (320 ?A)
+* p=100% (400 ?A)
+
+Step 2: Calculate Simulation Arrays and Total Currents
+For each condition, compute the simulation array and total current:
+1. Proportion for Contact 1:
+a=100/(100+p)
+2. Proportion for Contact 2:
+b=p/(100+p)
+3. Simulation Array:
+sim_array=[a,b,0,0,0,0]
+4. Total Current (I_"total" ):
+I_"total" =(400×(100+p))/100  ?A
+Example Calculations:
+* For p=0%:
+o a=1.0, b=0.0
+o sim_array = [1.0, 0.0, 0, 0, 0, 0]
+o I_"total" =400?A
+* For p=20%:
+o a=100/120?0.8333, b=20/120?0.1667
+o sim_array = [0.8333, 0.1667, 0, 0, 0, 0]
+o I_"total" =(400×(120))/100=480?A
+* Repeat for $p =$40%,60%,80%,100%, yielding I_"total"  values of:
+o 560 ?A, 640 ?A, 720 ?A, and 800 ?A, respectively.
+
+Step 3: Run Simulations in Ascent
+For each of the six conditions:
+* Input the calculated sim_array into the Ascent pipeline.
+* Execute the simulation to determine the activation threshold (T) for each nerve fiber.
+
+Step 4: Determine Activation Status
+For each condition:
+1. Use the corresponding I_"total"  from Step 2.
+2. For each nerve fiber:
+o If T?I_"total" , mark as activated (red).
+o If T>I_"total" , mark as not activated (grey).
+
+Step 5: Visualize and Analyze Results
+* Create visualizations (e.g., plots or heatmaps) showing the activation profiles for each condition.
+* Analyze trends in nerve fiber activation as the current on contact 2 increases from p=0% to p=100%.
+
+
+
+Executive Summary
+This report outlines a methodology for simulating nerve fiber activation using the Ascent pipeline. The simulation aims to determine activation profiles for nerve fibers under varying current conditions applied to two contacts. The approach involves defining simulation arrays, calculating total currents, and comparing activation thresholds to determine fiber activation states.
+Simulation Parameters
+* Contact 1: Fixed at 400 ?A
+* Contact 2: Varies from 0% to 100% of 400 ?A in 20% increments
+* Activation Threshold (T): Provided by Ascent for each fiber
+* Total Current (I_total): Varies based on Contact 2 percentage
+Methodology
+1. Condition Definition
+Six conditions are defined, varying the current on Contact 2:
+ConditionContact 1Contact 21400 ?A0 ?A2400 ?A80 ?A3400 ?A160 ?A4400 ?A240 ?A5400 ?A320 ?A6400 ?A400 ?A
+2. Simulation Array and Total Current Calculation
+For each condition:
+* Define p as the percentage for Contact 2 (0, 20, 40, 60, 80, 100)
+* Simulation array: [100/(100+p),p/(100+p),0,0,0,0]
+* Total current: I_"total" =400 ?"A"×(100+p)/100
+3. Activation Profile Determination
+For each fiber:
+* Obtain threshold (T) from Ascent simulation
+* Compare T to I_total:
+o If T?I_"total" : Fiber is activated (mark red)
+o If T>I_"total" : Fiber is not activated (mark grey)
+Simulation Conditions
+The following table and JSON structure define the simulation conditions:
+p (%)Simulation ArrayI_total (?A)0[1.0, 0.0, 0, 0, 0, 0]40020[0.8333, 0.1667, 0, 0, 0, 0]48040[0.7143, 0.2857, 0, 0, 0, 0]56060[0.625, 0.375, 0, 0, 0, 0]64080[0.5556, 0.4444, 0, 0, 0, 0]720100[0.5, 0.5, 0, 0, 0, 0]800
+{
+  "conditions": [
+    {
+      "p_percent": 0,
+      "sim_array": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+      "I_total_uA": 400
+    },
+    {
+      "p_percent": 20,
+      "sim_array": [0.8333, 0.1667, 0.0, 0.0, 0.0, 0.0],
+      "I_total_uA": 480
+    },
+    {
+      "p_percent": 40,
+      "sim_array": [0.7143, 0.2857, 0.0, 0.0, 0.0, 0.0],
+      "I_total_uA": 560
+    },
+    {
+      "p_percent": 60,
+      "sim_array": [0.625, 0.375, 0.0, 0.0, 0.0, 0.0],
+      "I_total_uA": 640
+    },
+    {
+      "p_percent": 80,
+      "sim_array": [0.5556, 0.4444, 0.0, 0.0, 0.0, 0.0],
+      "I_total_uA": 720
+    },
+    {
+      "p_percent": 100,
+      "sim_array": [0.5, 0.5, 0.0, 0.0, 0.0, 0.0],
+      "I_total_uA": 800
+    }
+  ]
+}
+
+Ascent Pipeline Integration
+The Ascent pipeline provides activation thresholds for each fiber under specified current distributions. It does not offer a direct function to determine activation at given amplitudes. Therefore, the simulation process involves:
+1. Running simulations with the defined sim_array to obtain thresholds (T)
+2. Comparing T to I_total to determine activation status
+3. Post-processing results to generate activation profiles
+Conclusion
+This simulation approach allows for the generation of activation profiles for nerve fibers under varying current conditions while maintaining a fixed current on Contact 1. The methodology is consistent with Ascent's threshold-based output and provides a framework for analyzing fiber activation across different stimulation scenarios.
+
+
